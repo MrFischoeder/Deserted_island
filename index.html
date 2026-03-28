@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deserted Island</title>
+    <link rel="stylesheet" href="css/style.css">
+    <!-- Socket.IO client — served by the Node.js server on the same origin -->
+    <!-- Only needed when running via `npm start` (node server/server.js)   -->
+    <script src="/socket.io/socket.io.js" onerror="console.warn('[main] Socket.IO not available — single-player only.')"></script>
+    <!-- Both libraries loaded as ES modules via esm.sh                -->
+    <!-- esm.sh converts any npm package to browser-compatible ESM    -->
+    <script type="importmap">
+    {
+      "imports": {
+        "pixi.js":        "https://esm.sh/pixi.js@7",
+        "honeycomb-grid": "https://esm.sh/honeycomb-grid@4"
+      }
+    }
+    </script>
+</head>
+<body>
+<div id="game-container">
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Start Screen -->
+    <div id="start-screen" class="overlay">
+        <div class="start-panel">
+            <h1 class="game-title">DESERTED ISLAND</h1>
+            <p class="game-subtitle">Survive. Explore. Escape.</p>
+            <div class="size-buttons" style="margin-top:36px;">
+                <button id="btn-start-game" class="size-btn">
+                    <span class="size-name">START GAME</span>
+                    <span class="size-desc">Create or join a lobby</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Multiplayer Lobby Screen -->
+    <div id="lobby-screen" class="overlay hidden">
+        <div class="lobby-panel">
+            <h2 class="lobby-title">MULTIPLAYER LOBBY</h2>
+            <div class="lobby-form">
+                <input id="lobby-name-input" type="text" class="lobby-input"
+                       placeholder="Your name" maxlength="20" autocomplete="off">
+            </div>
+            <div class="lobby-actions">
+                <button id="lobby-create-btn" class="size-btn">
+                    <span class="size-name">CREATE</span>
+                    <span class="size-desc">New Room</span>
+                </button>
+                <div class="lobby-join-row">
+                    <input id="lobby-code-input" type="text" class="lobby-input lobby-code-input"
+                           placeholder="ROOM CODE" maxlength="5" autocomplete="off">
+                    <button id="lobby-join-btn" class="size-btn">
+                        <span class="size-name">JOIN</span>
+                        <span class="size-desc">Enter Code</span>
+                    </button>
+                </div>
+            </div>
+            <p id="lobby-status" class="lobby-status"></p>
+            <div id="lobby-info" class="lobby-info hidden">
+                <p class="lobby-code-label">Room Code: <strong id="lobby-code-display" class="lobby-code-value"></strong></p>
+                <ul id="lobby-player-list" class="lobby-player-list"></ul>
+                <!-- Map size selector — visible to host only -->
+                <div id="lobby-map-size" class="hidden" style="margin-top:18px;">
+                    <p style="color:#a08060;font-size:.82em;letter-spacing:.05em;text-transform:uppercase;margin-bottom:8px;">Map Size</p>
+                    <div style="display:flex;gap:8px;">
+                        <button class="lobby-size-opt active" data-mapsize="small"
+                            style="flex:1;padding:7px 4px;border:1px solid #6a5030;background:#2a1e10;color:#c8a860;border-radius:5px;cursor:pointer;font-family:inherit;font-size:.8em;">
+                            Small<br><span style="color:#666;font-size:.85em;">25×20</span>
+                        </button>
+                        <button class="lobby-size-opt" data-mapsize="medium"
+                            style="flex:1;padding:7px 4px;border:1px solid #6a5030;background:#2a1e10;color:#c8a860;border-radius:5px;cursor:pointer;font-family:inherit;font-size:.8em;">
+                            Medium<br><span style="color:#666;font-size:.85em;">40×32</span>
+                        </button>
+                        <button class="lobby-size-opt" data-mapsize="large"
+                            style="flex:1;padding:7px 4px;border:1px solid #6a5030;background:#2a1e10;color:#c8a860;border-radius:5px;cursor:pointer;font-family:inherit;font-size:.8em;">
+                            Large<br><span style="color:#666;font-size:.85em;">60×48</span>
+                        </button>
+                    </div>
+                </div>
+                <button id="lobby-start-btn" class="size-btn hidden" style="margin-top:16px;">
+                    <span class="size-name">▶ START GAME</span>
+                    <span class="size-desc">Host only</span>
+                </button>
+            </div>
+            <div style="margin-top:24px;">
+                <button id="lobby-back-btn" class="size-btn">
+                    <span class="size-name">← BACK</span>
+                    <span class="size-desc">Return to Menu</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Screen -->
+    <div id="loading-screen" class="overlay hidden">
+        <div class="loading-panel">
+            <h2>Generating Island...</h2>
+            <div class="loading-bar">
+                <div class="loading-progress" id="loading-progress"></div>
+            </div>
+            <p id="loading-status">Preparing...</p>
+        </div>
+    </div>
+
+    <!-- HUD -->
+    <div id="hud" class="hidden">
+        <!-- Day / Sun Arc -->
+        <div id="day-indicator">
+            <svg id="sun-svg" viewBox="0 0 200 110" xmlns="http://www.w3.org/2000/svg">
+                <path d="M 10 100 A 90 90 0 0 1 190 100" stroke="#444" stroke-width="2" fill="none"/>
+                <circle id="sun-circle" cx="10" cy="100" r="11" fill="#FFD700" stroke="#FFA500" stroke-width="2"/>
+                <circle id="moon-circle" cx="10" cy="100" r="9" fill="#c8d8f0" stroke="#8899bb" stroke-width="2" style="display:none;"/>
+            </svg>
+            <div id="day-info">
+                <span id="day-number">Day 1</span>
+                <span id="ap-display">AP: 10/10</span>
+                <span id="day-phase">Dawn</span>
+            </div>
+        </div>
+
+        <!-- Survival Stats -->
+        <div id="survival-stats">
+            <div class="stat-bar">
+                <span class="stat-icon">❤️</span>
+                <div class="bar-container"><div class="bar-fill hp-fill" id="hp-fill" style="width:100%"></div></div>
+                <span class="stat-value" id="hp-value">100</span>
+            </div>
+            <div class="stat-bar">
+                <span class="stat-icon">🍖</span>
+                <div class="bar-container"><div class="bar-fill food-fill" id="food-fill" style="width:80%"></div></div>
+                <span class="stat-value" id="food-value">80</span>
+            </div>
+            <div class="stat-bar">
+                <span class="stat-icon">💧</span>
+                <div class="bar-container"><div class="bar-fill water-fill" id="water-fill" style="width:80%"></div></div>
+                <span class="stat-value" id="water-value">80</span>
+            </div>
+            <div class="stat-bar">
+                <span class="stat-icon">⚡</span>
+                <div class="bar-container"><div class="bar-fill energy-fill" id="energy-fill" style="width:100%"></div></div>
+                <span class="stat-value" id="energy-value">100</span>
+            </div>
+        </div>
+
+        <!-- Multiplayer day-end status (hidden in single-player) -->
+        <div id="day-status-panel" class="hidden">
+            <span id="day-status-text"></span>
+        </div>
+
+        <!-- Action Buttons (minimal — Inventory/Crafting moved to location panel) -->
+        <div id="hud-actions">
+            <button id="btn-god-mode" class="hud-btn" title="God Mode (G)">👁️</button>
+            <button id="btn-instant-actions" class="hud-btn" title="Instant Actions — skip timers">⚡</button>
+            <button id="btn-save" class="hud-btn" title="Save Game">💾</button>
+            <button id="btn-load" class="hud-btn" title="Load Game">📂</button>
+        </div>
+
+        <!-- Message Log -->
+        <div id="message-log">
+            <div id="message-list"></div>
+        </div>
+    </div>
+
+    <!-- Location Panel (floating, draggable) -->
+    <div id="location-panel" class="floating-panel hidden">
+        <div class="hex-panel-container">
+            <div class="hex-panel-header">
+                <span id="location-terrain-icon">🏖️</span>
+                <h2 id="location-terrain-name">Beach</h2>
+                <button class="close-btn" id="close-location-panel">✕</button>
+            </div>
+            <div class="hex-panel-body">
+                <p id="location-description">...</p>
+                <div id="location-status">
+                    <div class="status-items" id="location-status-items"></div>
+                </div>
+                <div id="location-actions">
+                    <h3>Actions</h3>
+                    <div class="action-buttons" id="action-buttons-list"></div>
+                </div>
+                <div id="location-panel-footer" class="panel-footer-actions"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loot Window -->
+    <div id="loot-window" class="modal hidden">
+        <div class="modal-panel">
+            <div class="modal-header">
+                <h2>Found Something!</h2>
+                <button class="close-btn" id="close-loot-window">✕</button>
+            </div>
+            <div id="loot-content"></div>
+            <div id="loot-footer" style="margin-top:12px;">
+                <button id="take-all-btn" class="action-btn">Take All</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Inventory Window -->
+    <div id="inventory-window" class="modal hidden">
+        <div class="modal-panel large">
+            <div class="modal-header">
+                <h2>🎒 Inventory &amp; Character</h2>
+                <button class="close-btn" id="close-inventory">✕</button>
+            </div>
+            <div id="inventory-content">
+                <div id="character-stats-panel" class="inventory-section"></div>
+                <div id="inventory-items-panel" class="inventory-section"></div>
+                <div id="ground-loot-panel" class="inventory-section ground-loot-section"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Crafting Window -->
+    <div id="crafting-window" class="modal hidden">
+        <div class="modal-panel large">
+            <div class="modal-header">
+                <h2>⚒️ Crafting</h2>
+                <button class="close-btn" id="close-crafting">✕</button>
+            </div>
+            <div id="crafting-content">
+                <div id="crafting-recipes-list"></div>
+                <div id="crafting-details"><p style="color:#666;font-size:.85em;">Select a recipe.</p></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Event Window -->
+    <div id="event-window" class="modal hidden">
+        <div class="modal-panel">
+            <div class="modal-header">
+                <h2 id="event-title">Event</h2>
+            </div>
+            <div id="event-content"></div>
+            <div id="event-actions"></div>
+        </div>
+    </div>
+
+    <!-- Combat Window -->
+    <div id="combat-window" class="modal hidden">
+        <div class="modal-panel">
+            <div class="modal-header">
+                <h2 id="combat-title">Encounter!</h2>
+            </div>
+            <div id="combat-content"></div>
+            <div id="combat-log" style="max-height:120px;overflow-y:auto;margin:8px 0;font-size:.8em;color:#aaa;"></div>
+            <div id="combat-actions"></div>
+        </div>
+    </div>
+
+    <!-- Save/Load Window -->
+    <div id="save-load-window" class="modal hidden">
+        <div class="modal-panel">
+            <div class="modal-header">
+                <h2 id="save-load-title">Save / Load</h2>
+                <button class="close-btn" id="close-save-load">✕</button>
+            </div>
+            <div id="save-load-content"></div>
+        </div>
+    </div>
+
+    <!-- Camp Window -->
+    <div id="camp-window" class="modal hidden">
+        <div class="modal-panel large">
+            <div class="modal-header">
+                <h2>⛺ Camp Management</h2>
+                <button class="close-btn" id="close-camp">✕</button>
+            </div>
+            <div id="camp-content" class="camp-content-wrap"></div>
+        </div>
+    </div>
+
+    <!-- Storage Window -->
+    <div id="storage-window" class="modal hidden">
+        <div class="modal-panel large">
+            <div class="modal-header">
+                <h2>🗃️ Storage Chest</h2>
+                <button class="close-btn" id="close-storage">✕</button>
+            </div>
+            <div id="storage-content" class="storage-layout"></div>
+        </div>
+    </div>
+
+    <!-- Hex Hover Tooltip -->
+    <div id="hex-tooltip" class="hidden"></div>
+
+    <!-- Intro Modal -->
+    <div id="intro-modal" class="modal hidden">
+        <div class="modal-panel intro-panel">
+            <div class="intro-header">
+                <span class="intro-wave">🌊</span>
+                <h2 class="intro-title">STRANDED</h2>
+                <span class="intro-wave">🌊</span>
+            </div>
+            <div class="intro-body">
+                <p class="intro-text">You open your eyes to the sound of waves rolling onto the shore. Your body aches, your clothes are soaked, and for a few long moments you struggle to understand what happened. Whether it was a wrecked boat or a crashed plane no longer matters — somehow, against all odds, you survived. Around you lies an unfamiliar beach, beyond it a wild island full of silence, heat, and uncertainty. You have no shelter, no clear plan, and no idea what waits deeper inland. For now, all you can do is steady yourself, take in your surroundings, and begin the slow work of staying alive.</p>
+            </div>
+            <div class="intro-divider"></div>
+            <div style="text-align:center;margin-top:18px;">
+                <button id="intro-btn-continue" class="intro-choice-btn intro-continue-btn">
+                    <span class="choice-icon">👁️</span>
+                    <div class="choice-body">
+                        <span class="choice-title">Take in your surroundings</span>
+                        <span class="choice-desc">You are alive. That is enough — for now.</span>
+                    </div>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Game Over Screen -->
+    <div id="game-over-screen" class="overlay hidden">
+        <div class="start-panel">
+            <h1 class="game-title" style="color:#e74c3c;">GAME OVER</h1>
+            <p class="game-subtitle" id="game-over-reason">You perished on the island.</p>
+            <div class="size-buttons" style="margin-top:30px;">
+                <button class="size-btn" id="btn-restart">
+                    <span class="size-name">RESTART</span>
+                    <span class="size-desc">New Island</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
